@@ -1,0 +1,10 @@
+__pycache__/
+assets/.picasa.ini
+*.py[cod]
+*.jpg
+*.png
+*.html
+*.ini
+*.gif
+*.png
+secrets.py
