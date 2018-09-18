@@ -13,6 +13,8 @@ import time
 import threading
 from Objs.DiscordSwitchboard.DiscordSwitchboard import DiscordSwitchboard, PriorityLevel
 from Objs.CardsAgainstGovernance.CardsAgainstGovernance import CardsAgainstGovernance
+from Objs.Deck.Deck import Card
+from Configs.CardList import CardList
 
 ADMIN_ID = "192729741395099648"
 CHANNEL = "484621382810992661"
@@ -29,6 +31,15 @@ class Cardsbot:
         self.game = None
         self.game_lock = threading.Lock()
 
+    @staticmethod
+    def MakeCards():
+        card_list = []
+        # Make cards
+        for card_param in CardList:
+            for _ in range(card_param[1]):
+                card_list.append(Card(card_param[0]))
+        return card_list
+        
     def main(self):
         client = discord.Client()
         
@@ -49,7 +60,7 @@ class Cardsbot:
             # We do this explicitly here for clarity but in the future the class can take care of it.
             if this_message == '!cardpreparegame' and message.channel.id == CHANNEL and not self.game_started:
                 with self.game_lock:
-                    self.game = CardsAgainstGovernance(self.switchboard, message.channel, client)
+                    self.game = CardsAgainstGovernance(self.switchboard, message.channel, client, self.MakeCards())
                     self.game_started = True
                 return
             await self.switchboard.on_message(message)                  

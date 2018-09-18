@@ -188,3 +188,13 @@ class DiscordSwitchboard:
         with self.lock:
             self.priority_dict[priority][id(this_checker)] = (this_checker, output, closure_list)
         return id(this_checker)
+        
+    # Sometimes it is best to add a closure after the initial function is added, for organizational purposes. This enables that.
+    def AddClosure(self, id, priority, closure):
+        with self.lock:
+            self.priority_dict[priority][id][2].append(closure)
+    
+    
+    
+    
+    
