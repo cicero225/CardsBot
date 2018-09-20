@@ -24,6 +24,12 @@ class PriorityLevel(Enum):
     GENERAL_BLOCKING = 3
     FALLBACK = 4
 
+# A decorator. Function must have no return value.
+def SafeLock(func):
+    def new_func(self, *args, **kwargs):
+        self.RunOrDeferIfActive(partial(func, self, *args, **kwargs))
+    return new_func
+    
 class DiscordSwitchboard:
     def __init__(self):
         self.lock = threading.Lock()
@@ -48,64 +54,97 @@ class DiscordSwitchboard:
                               PriorityLevel.GENERAL_BLOCKING: self.blocking_relay,
                               PriorityLevel.FALLBACK: self.fallback_relay}
         
+        # Needed to navigate the internal locks. Specifically, this should be locked first and checked before taking the main lock, for any function that isn't on_message. This is
+        # inelegant but Python lacks better locking things for this.
+        self.active_lock = threading.Lock()
+        self._is_active = False
+        self._deferred_actions = []
+        self._deferred_actions_async = []
+        
     async def __call__(self, message):
         await on_message(message)
     
+    def RunOrDeferIfActive(self, func):
+        with self.active_lock:
+            if self._is_active:
+                self._deferred_actions.append(func)
+            else:
+                with self.lock:
+                    func()
+
     # returns False if the message is not processed by anything, or the output of a successful priority_relay output, or True if something processed the message.
     # priority_relay outputs can also return False if they wish to signal a failure.
     async def on_message(self, message):
         with self.lock:  # This is unfortunate but necessary.
-            for matcher, output, closure_list in self._overriding.values():
-                if await matcher(message):
-                    return_val = await output(message)
-                    if return_val is not None:
+            with self.active_lock:
+                self._is_active = True
+            return_val = None
+            while True:
+                for matcher, output, closure_list in self._overriding.values():
+                    if await matcher(message):
+                        return_val = await output(message)
+                        if return_val is not None:
+                            if closure_list is not None:
+                                for closure in closure_list:
+                                    await closure()
+                            break
+                if return_val is not None:
+                    break
+                for matcher, output, closure_list in self.priority_relay.values():
+                    if await matcher(message):
+                        return_val = await output(message)
+                        if return_val is not None:
+                            if closure_list is not None:
+                                for closure in closure_list:
+                                    await closure()
+                            break
+                if return_val is not None:
+                    break
+                any_found = False
+                
+                # This is awkward but necessary.
+                value_list = list(self.general_relay.values())
+                matchers = [asyncio.ensure_future(value[0](message)) for value in value_list]
+                matches = await asyncio.gather(*matchers)
+                all_closures = []
+                for index, match in enumerate(matches):
+                    if match:
+                        asyncio.run_coroutine_threadsafe(value_list[index][1](message), asyncio.get_event_loop())
+                        if value_list[index][2]:
+                            all_closures.extend(value_list[index][2])
+                        any_found = True
+                
+                for matcher, output, closure_list in self.blocking_relay.values():
+                    if await matcher(message):
+                        await output(message)
                         if closure_list is not None:
-                            for closure in closure_list:
-                                await closure()
-                        return return_val
-            for matcher, output, closure_list in self.priority_relay.values():
-                if await matcher(message):
-                    return_val = await output(message)
-                    if return_val is not None:
-                        if closure_list is not None:
-                            for closure in closure_list:
-                                await closure()
-                        return return_val
-        
-            any_found = False
-            
-            # This is awkward but necessary.
-            value_list = list(self.general_relay.values())
-            matchers = [asyncio.ensure_future(value[0](message)) for value in value_list]
-            matches = await asyncio.gather(*matchers)
-            all_closures = []
-            for index, match in enumerate(matches):
-                if match:
-                    asyncio.run_coroutine_threadsafe(value_list[index][1](message), asyncio.get_event_loop())
-                    if value_list[index][2]:
-                        all_closures.extend(value_list[index][2])
-                    any_found = True
-            
-            for matcher, output, closure_list in self.blocking_relay.values():
-                if await matcher(message):
-                    await output(message)
-                    if closure_list is not None:
-                        all_closures.extend(closure_list)
-                    any_found = True
+                            all_closures.extend(closure_list)
+                        any_found = True
 
-            if not self.fallback_relay:
+                if not self.fallback_relay:
+                    for closure in all_closures:
+                        asyncio.run_coroutine_threadsafe(closure(), asyncio.get_event_loop())
+                    return_val = any_found
+                    break
+                
+                if not any_found:
+                    for output, closure_list in self.fallback_relay.values():
+                        asyncio.run_coroutine_threadsafe(output(message), asyncio.get_event_loop())
+                        if closure_list is not None:
+                            all_closures.extend(closure_list)
                 for closure in all_closures:
                     asyncio.run_coroutine_threadsafe(closure(), asyncio.get_event_loop())
-                return any_found
-            
-            if not any_found:
-                for output, closure_list in self.fallback_relay.values():
-                    asyncio.run_coroutine_threadsafe(output(message), asyncio.get_event_loop())
-                    if closure_list is not None:
-                        all_closures.extend(closure_list)
-            for closure in all_closures:
-                asyncio.run_coroutine_threadsafe(closure(), asyncio.get_event_loop())
-            return True
+                return_val = True
+                break
+            with self.active_lock:
+                self._is_active = False
+                for action in self._deferred_actions:
+                    action()
+                self._deferred_actions.clear()
+                for action in self._deferred_actions_async:
+                    await action()
+                self._deferred_actions_async.clear()
+        
     
     @staticmethod
     async def message_ignored(message):
@@ -126,16 +165,19 @@ class DiscordSwitchboard:
     @staticmethod
     async def mention_check(mentions, message, polarity=True):
         return any(x.id == mentions for x in message.mentions) == polarity
+        
+    @staticmethod
+    async def private_check(message, polarity=True):
+        return message.channel.is_private == polarity
     
-    # No lock!
-    def RemoveOutput(self, id, priority):
+    # Not Safe, used as closures.
+    def _RemoveOutput(self, id, priority):
         del self.priority_dict[priority][id]
     
-    # No lock!
-    async def RemoveOutputAsync(self, id, priority):
-        self.RemoveOutput(id, priority)
+    async def _RemoveOutputAsync(self, id, priority):
+        self._RemoveOutput(id, priority)
         
-    def GetCheckers(self, author_id=None, channel_id=None, mentions=None, starts_with=None, polarity=True):
+    def GetCheckers(self, author_id=None, channel_id=None, mentions=None, starts_with=None, is_private=None, polarity=True):
         checkers = []
         if channel_id is not None:
             checkers.append(partial(self.channel_check, channel_id, polarity=polarity))
@@ -145,6 +187,11 @@ class DiscordSwitchboard:
             checkers.append(partial(self.mention_check, mentions, polarity=polarity))
         if author_id is not None:
             checkers.append(partial(self.author_check, author_id, polarity=polarity))
+        if is_private is not None:
+            if is_private:
+                checkers.append(partial(self.private_check, polarity=polarity))
+            elif not is_private:
+                checkers.append(partial(self.private_check, polarity=not polarity))
         return checkers
     
     @staticmethod
@@ -155,44 +202,46 @@ class DiscordSwitchboard:
         return True
     
     # These affect this class, forcing the class to acknowledge only certain messages. Using named arguments is highly recommended.
-    def MustHave(self, author_id=None, channel_id=None, mentions=None, starts_with=None):
-        checkers = self.GetCheckers(author_id, channel_id, mentions, starts_with, polarity=False)
+    def MustHave(self, author_id=None, channel_id=None, mentions=None, starts_with=None, is_private=None):
+        checkers = self.GetCheckers(author_id, channel_id, mentions, starts_with, is_private, polarity=False)
         if checkers:
-            with self.lock:
+            def func():
                 for checker in reversed(checkers):
                     self._overriding[id(checker)] = (checker, self.message_ignored, None)
                     self._overriding.move_to_end(id(checker), False)
+            self.RunOrDeferIfActive(func)
     
-    # These add outputs to the priority relay, with given conditions optionally. The conditions are ignore for the fallbacks.
-    def RegisterOutput(self, output, priority, author_id=None, channel_id=None, mentions=None, starts_with=None, remove_self_when_done=False, remove_when_done=None, closure_list=None):
+    # These add outputs to the priority relay, with given conditions optionally. The conditions are ignored for the fallbacks.
+    def RegisterOutput(self, output, priority, author_id=None, channel_id=None, mentions=None, starts_with=None, is_private=None, remove_self_when_done=False, remove_when_done=None, closure_list=None):
         if priority == PriorityLevel.FALLBACK:
             # Determine closures
             closure_list = [] if closure_list is None else closure_list
             if remove_self_when_done:
-                closure_list.append(partial(RemoveOutputAsync, id(output), priority))
+                closure_list.append(partial(self._RemoveOutputAsync, id(output), priority))
             if remove_when_done is not None:
                 for closure_id, priority in remove_when_done:
-                    closure_list.append(partial(RemoveOutputAsync, closure_id, priority))
+                    closure_list.append(partial(self._RemoveOutputAsync, closure_id, priority))
             with self.lock:
                 self.priority_dict[priority].append(output, closure_list)
             return id(output)
-        checkers = self.GetCheckers(author_id, channel_id, mentions, starts_with)
+        checkers = self.GetCheckers(author_id, channel_id, mentions, starts_with, is_private)
         this_checker = partial(self.CheckConditions, checkers)
         # Determine closures
         closure_list = [] if closure_list is None else closure_list
         if remove_self_when_done:
-            closure_list.append(partial(self.RemoveOutputAsync, id(this_checker), priority))
+            closure_list.append(partial(self._RemoveOutputAsync, id(this_checker), priority))
         if remove_when_done is not None:
             for closure_id, priority in remove_when_done:
-                closure_list.append(partial(self.RemoveOutputAsync, closure_id, priority))    
-        with self.lock:
+                closure_list.append(partial(self._RemoveOutputAsync, closure_id, priority))  
+        def func():
             self.priority_dict[priority][id(this_checker)] = (this_checker, output, closure_list)
+        self.RunOrDeferIfActive(func)
         return id(this_checker)
         
     # Sometimes it is best to add a closure after the initial function is added, for organizational purposes. This enables that.
+    @SafeLock
     def AddClosure(self, id, priority, closure):
-        with self.lock:
-            self.priority_dict[priority][id][2].append(closure)
+        self.priority_dict[priority][id][2].append(closure)
     
     
     

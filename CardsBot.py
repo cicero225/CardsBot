@@ -14,7 +14,7 @@ import threading
 from Objs.DiscordSwitchboard.DiscordSwitchboard import DiscordSwitchboard, PriorityLevel
 from Objs.CardsAgainstGovernance.CardsAgainstGovernance import CardsAgainstGovernance
 from Objs.Deck.Deck import Card
-from Configs.CardList import CardList
+from Configs.CardList import QuestionsList, AnswersList
 
 ADMIN_ID = "192729741395099648"
 CHANNEL = "484621382810992661"
@@ -33,12 +33,16 @@ class Cardsbot:
 
     @staticmethod
     def MakeCards():
-        card_list = []
+        questions_list = []
         # Make cards
-        for card_param in CardList:
+        for card_param in QuestionsList:
             for _ in range(card_param[1]):
-                card_list.append(Card(card_param[0]))
-        return card_list
+                questions_list.append(Card(card_param[0]))
+        answers_list = []
+        for card_param in AnswersList:
+            for _ in range(card_param[1]):
+                answers_list.append(Card(card_param[0]))
+        return questions_list, answers_list
         
     def main(self):
         client = discord.Client()
