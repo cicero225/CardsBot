@@ -37,11 +37,11 @@ class Cardsbot:
         # Make cards
         for card_param in QuestionsList:
             for _ in range(card_param[1]):
-                questions_list.append(Card(card_param[0]))
+                questions_list.append(Card(card_param[0], card_param[1]))
         answers_list = []
         for card_param in AnswersList:
             for _ in range(card_param[1]):
-                answers_list.append(Card(card_param[0]))
+                answers_list.append(Card(card_param[0], card_param[1]))
         return questions_list, answers_list
         
     def main(self):

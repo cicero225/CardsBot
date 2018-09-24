@@ -3,10 +3,11 @@ import warnings
 
 # A very basic card, might have additional features in the future. Mainly, if just warns if destroyed without being flagged for destruction, indicating illogical destruction.
 class Card:
-    def __init__(self, description):
+    def __init__(self, description, data):
         self.description = description
         self.okay_to_delete = False
         self.owner = None   # Will be referenced to return cards to by PlayingArea
+        self.data = data
         
     def __del__(self):
         if not self.okay_to_delete:
@@ -58,15 +59,15 @@ class Deck:
     def Return(self, card):
         self.discard.append(card)
 
-# A temporary object for holding played cards. Returns cards to their owners when done.
+# A temporary object for holding played cards. Returns cards to their owning decks when done. Extend for further behavior.
 class PlayingArea:
     def __init__(self):
-        self.current_cards = []
+        self.current_cards = {}
 
-    def Play(self, card):
-        self.current_cards.append(card)
+    def Play(self, card, source_id):
+        self.current_cards[source_id] = card
         
     def EndTurn():
-        for card in self.current_cards:
+        for card in self.current_cards.values():
             card.Return()
         self.current_cards.clear()
