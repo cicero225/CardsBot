@@ -64,10 +64,18 @@ class PlayingArea:
     def __init__(self):
         self.current_cards = {}
 
+    def __del__(self):
+        # None of these cards will ever be deleted while this still exists, so this guarantees that okay_to_delete is set before their destructors are called.
+        for cards in self.current_cards.values():
+            for card in cards:
+                card.okay_to_delete = True
+        
     def Play(self, card, source_id):
-        self.current_cards[source_id] = card
+        self.current_cards.setdefault(source_id, [])
+        self.current_cards[source_id].append(card)
         
     def EndTurn():
-        for card in self.current_cards.values():
-            card.Return()
+        for cards in self.current_cards.values():
+            for card in cards:
+                card.Return()
         self.current_cards.clear()

@@ -50,7 +50,7 @@ class Cardsbot:
         @client.event
         async def on_ready():
             self.switchboard = DiscordSwitchboard()
-            self.switchboard.MustHave(channel_id=CHANNEL)   # We're not using it for any other channel right now, so let's just ahead and do this.
+            self.switchboard.MustHave(channel_id=CHANNEL, is_private=True, any=True)   # We're not using it for any other channel right now, so let's just ahead and do this.
 
         @client.event
         async def on_message(message):

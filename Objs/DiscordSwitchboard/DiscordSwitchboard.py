@@ -73,7 +73,7 @@ class DiscordSwitchboard:
                     func()
 
     # returns False if the message is not processed by anything, or the output of a successful priority_relay output, or True if something processed the message.
-    # priority_relay outputs can also return False if they wish to signal a failure.
+    # priority_relay outputs can also return False if they wish to signal a failure (which will also prevent the operation of all closures, self-removal, etc.)
     async def on_message(self, message):
         with self.lock:  # This is unfortunate but necessary.
             with self.active_lock:
@@ -83,7 +83,7 @@ class DiscordSwitchboard:
                 for matcher, output, closure_list in self._overriding.values():
                     if await matcher(message):
                         return_val = await output(message)
-                        if return_val is not None:
+                        if return_val is not None and return_val:
                             if closure_list is not None:
                                 for closure in closure_list:
                                     await closure()
@@ -93,7 +93,7 @@ class DiscordSwitchboard:
                 for matcher, output, closure_list in self.priority_relay.values():
                     if await matcher(message):
                         return_val = await output(message)
-                        if return_val is not None:
+                        if return_val is not None and return_val:
                             if closure_list is not None:
                                 for closure in closure_list:
                                     await closure()
@@ -202,13 +202,19 @@ class DiscordSwitchboard:
         return True
     
     # These affect this class, forcing the class to acknowledge only certain messages. Using named arguments is highly recommended.
-    def MustHave(self, author_id=None, channel_id=None, mentions=None, starts_with=None, is_private=None):
-        checkers = self.GetCheckers(author_id, channel_id, mentions, starts_with, is_private, polarity=False)
+    # Setting any=True causes this class to accept messages that meet _any_ condition, rather than all. Currently, this is irreversible.
+    def MustHave(self, author_id=None, channel_id=None, mentions=None, starts_with=None, is_private=None, any=False):
+        # If any = True, we want checkers to return positive checks then check until one is True. Otherwise, we want them to return negative checks.
+        checkers = self.GetCheckers(author_id, channel_id, mentions, starts_with, is_private, polarity=any)
         if checkers:
+            async def any_checker(message):
+                for checker in checkers:
+                    if await checker(message):
+                        return (not any)  # If any, then this means a checker was True, which means we _don't_ want the message ignored. If not any, then this means we do want it ignored.
+                return any
             def func():
-                for checker in reversed(checkers):
-                    self._overriding[id(checker)] = (checker, self.message_ignored, None)
-                    self._overriding.move_to_end(id(checker), False)
+                a_checker = lambda x: any_checker(x)
+                self._overriding[id(a_checker)] = (a_checker, self.message_ignored, None)
             self.RunOrDeferIfActive(func)
     
     # These add outputs to the priority relay, with given conditions optionally. The conditions are ignored for the fallbacks.
