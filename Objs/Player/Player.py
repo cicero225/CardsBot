@@ -24,6 +24,9 @@ class Player:
             raise LookupException("This id already has a functor!")
         self.input_responses[id] = functor
         
+    def RemoveResponse(self, id):
+        del self.input_responses[id]
+        
     async def on_message(self, message):
         for func in self.input_responses.values():
              asyncio.run_coroutine_threadsafe(func(message), asyncio.get_event_loop())
@@ -37,3 +40,16 @@ class Player:
         asyncio.run_coroutine_threadsafe(
             self.client.send_message(self.user, message),
             asyncio.get_event_loop())
+    
+    # Removes and returns a set of cards from the player's hand.
+    def GetCards(self, card_set):
+        removed_cards = []
+        new_hand = []
+        for x, card in enumerate(self.hand):
+            if x in card_list:
+                card_list.remove(x)
+                removed_cards.append(self.hand[x])
+            else:
+                new_hand.append(self.hand[x])
+        self.hand = new_hand
+        return removed_cards

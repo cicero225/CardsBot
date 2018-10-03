@@ -27,6 +27,7 @@ class CardsAgainstGovernance:   # cards here should be passed in as a unique cop
         self.turn_generator = None
         self.cur_czar = None
         self.new_question = None
+        self.score = {}
         
         # Setup.
         asyncio.run_coroutine_threadsafe(
@@ -53,6 +54,7 @@ class CardsAgainstGovernance:   # cards here should be passed in as a unique cop
             if player.id == message.author.id:
                 return False
         self.players.append(Player(message.author, self.switchboard, self.client))
+        self.score[message.author.id] = [message.author.name, 0]
         return True
         
     # Handles starting the game itself.
@@ -101,7 +103,7 @@ class CardsAgainstGovernance:   # cards here should be passed in as a unique cop
             return
         if len(words) < 2:
             return
-        card_choices = []
+        card_choices = set()
         for word in words[1:]:
             try:
                 card_choice = int(word)
@@ -111,23 +113,56 @@ class CardsAgainstGovernance:   # cards here should be passed in as a unique cop
             if card_choice < 0 or card_choice > len(player.hand) - 1:
                 player.SendMessage("Card # out of range! Try Again.")
                 return
-            card_choices.append(card_choice)
+            card_choices.add(card_choice)
         if len(card_choices) != self.new_question.data["num_answers"]:
             player.SendMessage("Wrong number of answers!")
-        for card_choice in card_choices:
-            self.playing_area.Play(self.player.hand[card_choice], player.user.id)
-        # TODO: turn this into a player method
-        self.player.hand = [card for x, card in enumerate(self.player.hand) if x not in card_choice]
+        actual_cards = self.player.GetCards(card_choices)
+        for card in actual_cards:
+            self.playing_area.Play(card, player.user.id)
+        player.RemoveResponse("WaitForCardPlay")
         with self.player_lock:
             self.has_played[player.user.id] = True
             for id, has_played in self.has_played.items():
                 if (id != self.cur_czar.user.id or DEBUG) and not has_played:
                     return
-            # Clear has_played and remove functors
-            self.ResolveTurn()
+            self.has_played.clear()
+            for player in self.players:
+                if not DEBUG and player.user == self.cur_czar.user:
+                    continue
+            # TODO: fancify card list display
+            asyncio.run_coroutine_threadsafe(
+            self.client.send_message(self.channel,
+                                     ''.join(["All responses received. ", self.cur_czar.user.name, " should choose their favorite response:\n\n", '\n'.join(str(x) + ": " + ','.join(x.description for x in self.playing_area.current_cards[source_id]) for x, source_id in enumerate(self.playing_area.current_cards.keys()))])),
+            asyncio.get_event_loop())
+            self.switchboard.RegisterOutput(self.ResolveTurn, PriorityLevel.PRIORITY, channel_id=channel.id,
+                                            author_id=self.cur_czar.user.id, starts_with="!choose",
+                                            remove_self_when_done=True)
             
-    def ResolveTurn(self):
-        pass
+    def ResolveTurn(self, message):
+        words = message.content.lower().split()
+        if words[0] != "!choose":            
+            return
+        if len(words) < 2:
+            return
+        try:
+            choice = int(words[1])
+        except (ValueError, TypeError):
+            asyncio.run_coroutine_threadsafe(
+                self.client.send_message(self.channel, "Command improperly formatted! Try again."),
+                asyncio.get_event_loop()))
+            return
+        ref_list = list(self.playing_area.current_cards.keys())
+        if choice < 0 or choice > len(ref_list) - 1:
+            asyncio.run_coroutine_threadsafe(
+                self.client.send_message(self.channel, "Card # out of range! Try Again."),
+                asyncio.get_event_loop())
+            return
+        winner = ref_list[choice]
+        self.score[winner][1] += 1
+        asyncio.run_coroutine_threadsafe(
+                self.client.send_message(self.channel, ''.join(["That belonged to ", self.score[winner][0], ", who now has ", str(self.score[winner][1]), " points!"])),
+                asyncio.get_event_loop())
+        self.SetupTurn()
 
     def EndGame(self):
         pass

@@ -1,5 +1,6 @@
 import random
 import warnings
+from collections import OrderedDict
 
 # A very basic card, might have additional features in the future. Mainly, if just warns if destroyed without being flagged for destruction, indicating illogical destruction.
 class Card:
@@ -62,7 +63,7 @@ class Deck:
 # A temporary object for holding played cards. Returns cards to their owning decks when done. Extend for further behavior.
 class PlayingArea:
     def __init__(self):
-        self.current_cards = {}
+        self.current_cards = OrderedDict()
 
     def __del__(self):
         # None of these cards will ever be deleted while this still exists, so this guarantees that okay_to_delete is set before their destructors are called.
