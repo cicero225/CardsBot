@@ -37,7 +37,7 @@ class DiscordSwitchboard:
         self._overriding = OrderedDict()
         # All conditional relays are of the form OrderedDict[id: (matching_coroutine(message)->bool, output_coroutine(message) OR DiscordSwitchboard), Closure (run when done)].
         # where id is id(matching_coroutine) to facilitate look-up. Hold onto the functor or id if you wish to remove/modify this later. (id is returned by all relevant utility functions)
-        # Note that for priority_relay the output_coroutine is expect to return a value (None if the output "passes", False if the message was not processed, True if it was processed succesfully.)
+        # Note that for priority_relay the output_coroutine is expect to return a value (None if the output "passes (chooses to do nothing and should be passed to next ouput)", False if the message was not processed, True if it was processed succesfully.)
         
         # Note that id is for the _coroutine_, not the Task. Use functools.partial if you wish to anonymize a coroutine.
         
@@ -73,7 +73,7 @@ class DiscordSwitchboard:
                     func()
 
     # returns False if the message is not processed by anything, or the output of a successful priority_relay output, or True if something processed the message.
-    # priority_relay outputs can also return False if they wish to signal a failure (which will also prevent the operation of all closures, self-removal, etc.)
+    # priority_relay outputs can also return False or None if they wish to signal a failure (which will also prevent the operation of all closures, self-removal, etc.)
     async def on_message(self, message):
         with self.lock:  # This is unfortunate but necessary.
             with self.active_lock:
@@ -93,11 +93,15 @@ class DiscordSwitchboard:
                 for matcher, output, closure_list in self.priority_relay.values():
                     if await matcher(message):
                         return_val = await output(message)
-                        if return_val is not None and return_val:
-                            if closure_list is not None:
-                                for closure in closure_list:
-                                    await closure()
-                            break
+                        if return_val is not None:
+                            if return_val:
+                                if closure_list is not None:
+                                    for closure in closure_list:
+                                        await closure()
+                                break
+                            else:
+                                break
+                        
                 if return_val is not None:
                     break
                 any_found = False

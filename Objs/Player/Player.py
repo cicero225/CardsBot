@@ -46,8 +46,8 @@ class Player:
         removed_cards = []
         new_hand = []
         for x, card in enumerate(self.hand):
-            if x in card_list:
-                card_list.remove(x)
+            if x in card_set:
+                card_set.remove(x)
                 removed_cards.append(self.hand[x])
             else:
                 new_hand.append(self.hand[x])

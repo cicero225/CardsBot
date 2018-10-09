@@ -75,7 +75,7 @@ class PlayingArea:
         self.current_cards.setdefault(source_id, [])
         self.current_cards[source_id].append(card)
         
-    def EndTurn():
+    def EndTurn(self):
         for cards in self.current_cards.values():
             for card in cards:
                 card.Return()
